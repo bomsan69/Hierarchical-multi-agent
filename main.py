@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -101,6 +102,9 @@ class Config:
     # reRank 설정
     relevance_threshold: float = 0.5  # 만족도 임계값 (50%)
     max_retry_count: int = 1  # 재검색 최대 횟수
+
+    # 웹 검색 설정
+    search_delay: float = 2.0  # 검색 API 호출 전 대기 시간 (초)
 
     # 웹 스크래핑 설정
     max_scrape_urls: int = 3  # 최대 스크래핑 URL 수
@@ -628,6 +632,8 @@ class ResearchGraphBuilder:
             agent_logger.debug(f"user_message: {user_message[:200]}...")
 
             # 첫 번째 검색
+            agent_logger.info(f"BraveSearch API 호출 전 {config.search_delay}초 대기...")
+            time.sleep(config.search_delay)
             agent_logger.info("BraveSearch API 호출 중...")
             result = self.search_agent.invoke(state)
             search_result = result["messages"][-1].content
@@ -647,6 +653,8 @@ class ResearchGraphBuilder:
                 agent_logger.info(f"재구성된 쿼리: {rephrased_query}")
 
                 retry_state = {"messages": [HumanMessage(content=rephrased_query)]}
+                agent_logger.info(f"재검색 API 호출 전 {config.search_delay}초 대기...")
+                time.sleep(config.search_delay)
                 agent_logger.info("재검색 API 호출 중...")
                 retry_result = self.search_agent.invoke(retry_state)
                 retry_search_result = retry_result["messages"][-1].content
@@ -1094,8 +1102,7 @@ def main():
 
     # 예시 요청 실행
     user_request = (
-        "https://www.aitimes.com/news/articleView.html?idxno=206185 가사를 읽고 "
-        "기사 내용을 바탕으로 1500자 내외로 블로그를 작성하세요."
+        "Please search the origin of Groudnhog Day and what kind of events you're doing on this day and make a script for the video production "
     )
 
     agent_logger.info("=" * 80)
