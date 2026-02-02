@@ -12,12 +12,67 @@ Version: 1.0.0
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, Callable, Dict, List, Literal, Optional, TypedDict
 
 from dotenv import load_dotenv
+
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+
+def setup_agent_logger() -> logging.Logger:
+    """
+    에이전트 로깅 시스템을 설정합니다.
+
+    로그 파일은 logs/YYYY-MM-DD.agent.log 형식으로 저장됩니다.
+    """
+    # logs 디렉토리 생성
+    log_dir = Path(__file__).parent.resolve() / "logs"
+    log_dir.mkdir(exist_ok=True)
+
+    # 로그 파일명 생성 (YYYY-MM-DD.agent.log)
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_file = log_dir / f"{today}.agent.log"
+
+    # 로거 생성
+    logger = logging.getLogger("agent")
+    logger.setLevel(logging.DEBUG)
+
+    # 이미 핸들러가 있으면 추가하지 않음
+    if logger.handlers:
+        return logger
+
+    # 파일 핸들러 설정
+    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+
+    # 포맷터 설정
+    formatter = logging.Formatter(
+        fmt="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(formatter)
+
+    # 콘솔 핸들러 설정 (선택적)
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+
+    # 핸들러 추가
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+
+    return logger
+
+
+# 전역 로거 인스턴스
+agent_logger = setup_agent_logger()
 from langchain.agents import create_agent
 from langchain_community.document_loaders import WebBaseLoader
 from langchain_community.tools import BraveSearch
@@ -128,14 +183,17 @@ def create_outline(
     file_name: Annotated[str, "File path to save the outline. Must be a local file name, not a URL."],
 ) -> Annotated[str, "Path of the saved outline file."]:
     """아웃라인을 생성하고 파일로 저장합니다. URL은 파일명으로 사용할 수 없습니다."""
+    agent_logger.info(f"[TOOL:create_outline] 아웃라인 생성 (포인트 수: {len(points)})")
     # URL인 경우 오류 반환
     if file_name.startswith(("http://", "https://")):
+        agent_logger.error(f"[TOOL:create_outline] URL은 파일명으로 사용 불가: {file_name}")
         return f"Error: '{file_name}' is a URL, not a valid file name."
 
     file_path = config.working_directory / file_name
     with file_path.open("w", encoding="utf-8") as file:
         for i, point in enumerate(points, 1):
             file.write(f"{i}. {point}\n")
+    agent_logger.info(f"[TOOL:create_outline] 저장 완료: {file_name}")
     return f"Outline saved to {file_name}"
 
 
@@ -146,18 +204,22 @@ def read_document(
     end: Annotated[Optional[int], "The end line. Default is None"] = None,
 ) -> str:
     """지정된 문서를 읽어 내용을 반환합니다. URL은 지원하지 않습니다."""
+    agent_logger.info(f"[TOOL:read_document] 문서 읽기: {file_name}")
     # URL인 경우 오류 반환
     if file_name.startswith(("http://", "https://")):
+        agent_logger.error(f"[TOOL:read_document] URL은 지원하지 않음: {file_name}")
         return f"Error: '{file_name}' is a URL, not a local file. Use scrape_webpages tool for URLs."
 
     file_path = config.working_directory / file_name
 
     if not file_path.exists():
+        agent_logger.error(f"[TOOL:read_document] 파일 없음: {file_name}")
         return f"Error: File '{file_name}' does not exist."
 
     with file_path.open("r", encoding="utf-8") as file:
         lines = file.readlines()
     start = start or 0
+    agent_logger.info(f"[TOOL:read_document] 읽기 완료 (라인 수: {len(lines)}, 범위: {start}:{end})")
     return "\n".join(lines[start:end])
 
 
@@ -167,13 +229,16 @@ def write_document(
     file_name: Annotated[str, "File path to save the document. Must be a local file name, not a URL."],
 ) -> Annotated[str, "Path of the saved document file."]:
     """텍스트 문서를 생성하고 저장합니다. URL은 파일명으로 사용할 수 없습니다."""
+    agent_logger.info(f"[TOOL:write_document] 문서 작성: {file_name}")
     # URL인 경우 오류 반환
     if file_name.startswith(("http://", "https://")):
+        agent_logger.error(f"[TOOL:write_document] URL은 파일명으로 사용 불가: {file_name}")
         return f"Error: '{file_name}' is a URL, not a valid file name."
 
     file_path = config.working_directory / file_name
     with file_path.open("w", encoding="utf-8") as file:
         file.write(content)
+    agent_logger.info(f"[TOOL:write_document] 저장 완료 (크기: {len(content)} chars)")
     return f"Document saved to {file_name}"
 
 
@@ -186,13 +251,16 @@ def edit_document(
     ],
 ) -> Annotated[str, "Path of the edited document file."]:
     """문서의 특정 라인에 텍스트를 삽입하여 편집합니다. URL은 지원하지 않습니다."""
+    agent_logger.info(f"[TOOL:edit_document] 문서 편집: {file_name} (삽입 수: {len(inserts)})")
     # URL인 경우 오류 반환
     if file_name.startswith(("http://", "https://")):
+        agent_logger.error(f"[TOOL:edit_document] URL은 지원하지 않음: {file_name}")
         return f"Error: '{file_name}' is a URL, not a local file."
 
     file_path = config.working_directory / file_name
 
     if not file_path.exists():
+        agent_logger.error(f"[TOOL:edit_document] 파일 없음: {file_name}")
         return f"Error: File '{file_name}' does not exist."
 
     with file_path.open("r", encoding="utf-8") as file:
@@ -201,12 +269,15 @@ def edit_document(
     for line_number, text in sorted(inserts.items()):
         if 1 <= line_number <= len(lines) + 1:
             lines.insert(line_number - 1, text + "\n")
+            agent_logger.debug(f"  라인 {line_number}에 텍스트 삽입")
         else:
+            agent_logger.error(f"[TOOL:edit_document] 잘못된 라인 번호: {line_number}")
             return f"Error: Line number {line_number} is out of range."
 
     with file_path.open("w", encoding="utf-8") as file:
         file.writelines(lines)
 
+    agent_logger.info(f"[TOOL:edit_document] 편집 완료: {file_name}")
     return f"Document edited and saved to {file_name}"
 
 
@@ -225,9 +296,11 @@ def scrape_webpages(urls: List[str]) -> str:
     Returns:
         스크래핑된 문서 내용들
     """
+    agent_logger.info(f"[TOOL:scrape_webpages] 스크래핑 시작 (URL 수: {len(urls)})")
     results = []
 
-    for url in urls[:config.max_scrape_urls]:
+    for idx, url in enumerate(urls[:config.max_scrape_urls], 1):
+        agent_logger.debug(f"  [{idx}/{min(len(urls), config.max_scrape_urls)}] {url}")
         try:
             loader = WebBaseLoader(
                 url,
@@ -239,11 +312,14 @@ def scrape_webpages(urls: List[str]) -> str:
                 results.append(
                     f'<Document name="{title}">\n{doc.page_content}\n</Document>'
                 )
+            agent_logger.info(f"  [{idx}] 성공: {title[:50]}...")
         except Exception as e:
+            agent_logger.error(f"  [{idx}] 실패: {str(e)}")
             results.append(
                 f'<Document url="{url}">\nError scraping page: {str(e)}\n</Document>'
             )
 
+    agent_logger.info(f"[TOOL:scrape_webpages] 완료 (결과 수: {len(results)})")
     return "\n\n".join(results)
 
 
@@ -263,10 +339,15 @@ def python_repl_tool(
 
     WARNING: 로컬에서 코드를 실행하므로 샌드박스 환경이 아닐 경우 위험할 수 있습니다.
     """
+    agent_logger.info("[TOOL:python_repl] 코드 실행 시작")
+    agent_logger.debug(f"코드:\n{code[:500]}...")
     try:
         result = _repl.run(code)
+        agent_logger.info("[TOOL:python_repl] 코드 실행 성공")
+        agent_logger.debug(f"출력: {result[:200]}..." if result else "출력 없음")
         return f"Successfully executed:\n```python\n{code}\n```\nStdout: {result}"
     except BaseException as e:
+        agent_logger.error(f"[TOOL:python_repl] 코드 실행 실패: {repr(e)}")
         return f"Failed to execute. Error: {repr(e)}"
 
 
@@ -304,6 +385,9 @@ class ReRankService:
         Returns:
             관련성 점수 (0.0 ~ 1.0)
         """
+        agent_logger.debug("[ReRank] 관련성 평가 시작")
+        agent_logger.debug(f"  쿼리: {query[:100]}...")
+
         evaluation_prompt = f"""You are a relevance evaluator. Evaluate how well the search results answer the user's question.
 
 User's Question: {query}
@@ -324,6 +408,9 @@ Return your score and reasoning."""
             {"role": "user", "content": evaluation_prompt}
         ])
 
+        agent_logger.info(f"[ReRank] 관련성 점수: {response['score']:.2f}")
+        agent_logger.debug(f"[ReRank] 평가 이유: {response.get('reasoning', 'N/A')}")
+
         return response["score"]
 
     def rephrase_query(self, original_query: str, search_result: str) -> str:
@@ -337,6 +424,9 @@ Return your score and reasoning."""
         Returns:
             재구성된 질문
         """
+        agent_logger.info("[ReRank] 쿼리 재구성 시작")
+        agent_logger.debug(f"  원본 쿼리: {original_query}")
+
         rephrase_prompt = f"""The original search query did not yield satisfactory results. Please rephrase the query to get better search results.
 
 Original Query: {original_query}
@@ -354,6 +444,9 @@ Return the rephrased query."""
         response = self.llm.with_structured_output(RephrasedQuery).invoke([
             {"role": "user", "content": rephrase_prompt}
         ])
+
+        agent_logger.info(f"[ReRank] 재구성된 쿼리: {response['new_query']}")
+        agent_logger.debug(f"[ReRank] 재구성 이유: {response.get('reasoning', 'N/A')}")
 
         return response["new_query"]
 
@@ -465,6 +558,10 @@ def create_supervisor_node(
 
     def supervisor_node(state: State) -> Command[str]:
         """LLM 기반 라우터"""
+        agent_logger.info("=" * 50)
+        agent_logger.info(f"[SUPERVISOR] 라우팅 결정 중... (workers: {members})")
+        agent_logger.info(f"messages 수: {len(state['messages'])}")
+
         messages = [
             {"role": "system", "content": system_prompt},
         ] + state["messages"]
@@ -472,8 +569,15 @@ def create_supervisor_node(
         response = llm.with_structured_output(Router).invoke(messages)
         goto = response["next"]
 
+        agent_logger.info(f"[SUPERVISOR] LLM 응답: {goto}")
+
         if goto == "FINISH":
             goto = END
+            agent_logger.info("[SUPERVISOR] 작업 완료 → END")
+        else:
+            agent_logger.info(f"[SUPERVISOR] 다음 워커: {goto}")
+
+        agent_logger.info("=" * 50)
 
         return Command(goto=goto, update={"next": goto})
 
@@ -517,48 +621,49 @@ class ResearchGraphBuilder:
             4. 두 결과 중 더 좋은 것 선택
             5. search_agent 결과의 URL은 무시 (web_scraper 트리거 안 함)
             """
-            print(f"\n{'='*60}")
-            print(f"[SEARCH_NODE] 검색 시작...")
+            agent_logger.info("=" * 60)
+            agent_logger.info("[SEARCH_NODE] 검색 시작")
 
             user_message = state["messages"][0].content if state["messages"] else ""
-            print(f"  - user_message: {user_message[:100]}...")
+            agent_logger.debug(f"user_message: {user_message[:200]}...")
 
             # 첫 번째 검색
-            print(f"  - BraveSearch API 호출 중...")
+            agent_logger.info("BraveSearch API 호출 중...")
             result = self.search_agent.invoke(state)
             search_result = result["messages"][-1].content
-            print(f"  - 검색 결과 수신 (길이: {len(search_result)})")
+            agent_logger.info(f"검색 결과 수신 (길이: {len(search_result)} chars)")
+            agent_logger.debug(f"검색 결과 미리보기: {search_result[:500]}...")
 
             first_score = self.rerank_service.evaluate_relevance(user_message, search_result)
-            print(f"  - 첫 번째 관련성 점수: {first_score}")
+            agent_logger.info(f"첫 번째 관련성 점수: {first_score:.2f}")
 
             best_result = search_result
             best_score = first_score
 
             # 만족도가 임계값 미만이면 재검색
             if self.rerank_service.should_retry(first_score):
-                print(f"  - 점수가 임계값({config.relevance_threshold}) 미만. 재검색 시도...")
+                agent_logger.warning(f"점수가 임계값({config.relevance_threshold}) 미만. 재검색 시도...")
                 rephrased_query = self.rerank_service.rephrase_query(user_message, search_result)
-                print(f"  - 재구성된 쿼리: {rephrased_query}")
+                agent_logger.info(f"재구성된 쿼리: {rephrased_query}")
 
                 retry_state = {"messages": [HumanMessage(content=rephrased_query)]}
-                print(f"  - 재검색 API 호출 중...")
+                agent_logger.info("재검색 API 호출 중...")
                 retry_result = self.search_agent.invoke(retry_state)
                 retry_search_result = retry_result["messages"][-1].content
 
                 second_score = self.rerank_service.evaluate_relevance(user_message, retry_search_result)
-                print(f"  - 두 번째 관련성 점수: {second_score}")
+                agent_logger.info(f"두 번째 관련성 점수: {second_score:.2f}")
 
                 # 더 좋은 결과 선택
                 if second_score > first_score:
                     best_result = retry_search_result
                     best_score = second_score
-                    print(f"  - 두 번째 결과 선택 (더 높은 점수)")
+                    agent_logger.info("두 번째 결과 선택 (더 높은 점수)")
                 else:
-                    print(f"  - 첫 번째 결과 유지")
+                    agent_logger.info("첫 번째 결과 유지")
 
-            print(f"  [완료] 최종 점수: {best_score}")
-            print(f"{'='*60}\n")
+            agent_logger.info(f"[SEARCH_NODE 완료] 최종 점수: {best_score:.2f}")
+            agent_logger.info("=" * 60)
 
             return Command(
                 update={
@@ -578,25 +683,29 @@ class ResearchGraphBuilder:
 
         def web_scraper_node(state: ResearchState) -> Command[Literal["supervisor"]]:
             """사용자가 제공한 URL을 스크래핑합니다."""
-            print(f"\n{'='*60}")
-            print(f"[WEB_SCRAPER_NODE] 스크래핑 시작...")
+            agent_logger.info("=" * 60)
+            agent_logger.info("[WEB_SCRAPER_NODE] 스크래핑 시작")
 
             urls = state.get("urls_found", [])
-            print(f"  - urls_found: {urls}")
+            agent_logger.info(f"urls_found: {urls}")
 
             if urls:
-                print(f"  - URL이 제공됨. 스크래핑 진행...")
+                agent_logger.info(f"URL {len(urls)}개 제공됨. 스크래핑 진행...")
+                for idx, url in enumerate(urls[:config.max_scrape_urls], 1):
+                    agent_logger.debug(f"  URL {idx}: {url}")
                 url_message = f"Please scrape the following URLs to get detailed information: {urls[:config.max_scrape_urls]}"
                 modified_state = {
                     "messages": state["messages"] + [HumanMessage(content=url_message)]
                 }
                 result = self.web_scraper_agent.invoke(modified_state)
-                print(f"  - 스크래핑 완료 (결과 길이: {len(result['messages'][-1].content)})")
+                agent_logger.info(f"스크래핑 완료 (결과 길이: {len(result['messages'][-1].content)} chars)")
+                agent_logger.debug(f"스크래핑 결과 미리보기: {result['messages'][-1].content[:500]}...")
             else:
-                print(f"  - URL이 없음. 기존 state로 진행...")
+                agent_logger.warning("URL이 없음. 기존 state로 진행...")
                 result = self.web_scraper_agent.invoke(state)
 
-            print(f"{'='*60}\n")
+            agent_logger.info("[WEB_SCRAPER_NODE 완료]")
+            agent_logger.info("=" * 60)
 
             return Command(
                 update={
@@ -634,34 +743,34 @@ class ResearchGraphBuilder:
             user_message = messages[0].content if messages else ""
             user_provided_urls = extract_urls_from_text(user_message)
 
-            # 디버그 로그 추가
-            print(f"\n{'='*60}")
-            print(f"[RESEARCH_SUPERVISOR] 라우팅 결정 중...")
-            print(f"  - user_message: {user_message[:100]}...")
-            print(f"  - user_provided_urls: {user_provided_urls}")
-            print(f"  - search_completed: {search_completed}")
-            print(f"  - scrape_completed: {scrape_completed}")
-            print(f"  - relevance_score: {relevance_score}")
+            # 로깅
+            agent_logger.info("=" * 60)
+            agent_logger.info("[RESEARCH_SUPERVISOR] 라우팅 결정 중...")
+            agent_logger.debug(f"user_message: {user_message[:200]}...")
+            agent_logger.info(f"user_provided_urls: {user_provided_urls}")
+            agent_logger.info(f"search_completed: {search_completed}")
+            agent_logger.info(f"scrape_completed: {scrape_completed}")
+            agent_logger.info(f"relevance_score: {relevance_score:.2f}")
 
             # 라우팅 결정 (수정된 로직: URL 있으면 search 스킵)
             if user_provided_urls and not scrape_completed:
                 # 사용자 제공 URL이 있으면 search 스킵하고 바로 web_scraper로
                 goto = "web_scraper"
-                print(f"  → URL이 제공됨. search 스킵, web_scraper로 이동")
+                agent_logger.info("→ URL이 제공됨. search 스킵, web_scraper로 이동")
             elif not search_completed and not user_provided_urls:
                 # URL이 없고 검색도 안 됐으면 search 실행
                 goto = "search"
-                print(f"  → URL 없음. search 실행")
+                agent_logger.info("→ URL 없음. search 실행")
             elif scrape_completed or search_completed:
                 # 스크랩이나 검색 완료되면 종료
                 goto = END
-                print(f"  → 작업 완료. END로 이동")
+                agent_logger.info("→ 작업 완료. END로 이동")
             else:
                 goto = END
-                print(f"  → 기본: END로 이동")
+                agent_logger.info("→ 기본: END로 이동")
 
-            print(f"  [결정] goto = {goto}")
-            print(f"{'='*60}\n")
+            agent_logger.info(f"[RESEARCH_SUPERVISOR 결정] goto = {goto}")
+            agent_logger.info("=" * 60)
 
             # State 업데이트
             update_dict: dict[str, Any] = {
@@ -720,11 +829,22 @@ class PaperWritingGraphBuilder:
         """공통 노드 생성 헬퍼"""
 
         def node(state: State) -> Command[Literal["supervisor"]]:
+            agent_logger.info("-" * 50)
+            agent_logger.info(f"[WRITING/{name.upper()}] 노드 시작")
+            agent_logger.info(f"messages 수: {len(state['messages'])}")
+
             result = agent.invoke(state)
+
+            result_content = result["messages"][-1].content
+            agent_logger.info(f"[WRITING/{name.upper()}] 노드 완료")
+            agent_logger.info(f"결과 길이: {len(result_content)} chars")
+            agent_logger.debug(f"결과 미리보기: {result_content[:300]}...")
+            agent_logger.info("-" * 50)
+
             return Command(
                 update={
                     "messages": [
-                        HumanMessage(content=result["messages"][-1].content, name=name)
+                        HumanMessage(content=result_content, name=name)
                     ]
                 },
                 goto="supervisor",
@@ -785,14 +905,14 @@ class SuperGraphBuilder:
 
         def call_research_team(state: State) -> Command[Literal["supervisor"]]:
             """Research Graph를 호출합니다."""
-            print(f"\n{'#'*60}")
-            print(f"[RESEARCH_TEAM] Research Graph 시작")
-            print(f"  - messages 수: {len(state['messages'])}")
+            agent_logger.info("#" * 60)
+            agent_logger.info("[RESEARCH_TEAM] Research Graph 시작")
+            agent_logger.info(f"messages 수: {len(state['messages'])}")
             if state['messages']:
                 user_msg = state['messages'][0]
                 content = user_msg.content if hasattr(user_msg, 'content') else str(user_msg)
-                print(f"  - 첫 메시지: {content[:100]}...")
-            print(f"{'#'*60}\n")
+                agent_logger.debug(f"첫 메시지: {content[:200]}...")
+            agent_logger.info("#" * 60)
 
             response = self.research_graph.invoke({
                 "messages": state["messages"],
@@ -803,10 +923,11 @@ class SuperGraphBuilder:
                 "search_result": "",
             })
 
-            print(f"\n{'#'*60}")
-            print(f"[RESEARCH_TEAM] Research Graph 완료")
-            print(f"  - 응답 메시지 수: {len(response['messages'])}")
-            print(f"{'#'*60}\n")
+            agent_logger.info("#" * 60)
+            agent_logger.info("[RESEARCH_TEAM] Research Graph 완료")
+            agent_logger.info(f"응답 메시지 수: {len(response['messages'])}")
+            agent_logger.debug(f"최종 응답 미리보기: {response['messages'][-1].content[:300]}...")
+            agent_logger.info("#" * 60)
 
             return Command(
                 update={
@@ -827,7 +948,18 @@ class SuperGraphBuilder:
 
         def call_paper_writing_team(state: State) -> Command[Literal["supervisor"]]:
             """Paper Writing Graph를 호출합니다."""
+            agent_logger.info("#" * 60)
+            agent_logger.info("[WRITING_TEAM] Paper Writing Graph 시작")
+            agent_logger.info(f"messages 수: {len(state['messages'])}")
+            agent_logger.info("#" * 60)
+
             response = self.paper_writing_graph.invoke(state)
+
+            agent_logger.info("#" * 60)
+            agent_logger.info("[WRITING_TEAM] Paper Writing Graph 완료")
+            agent_logger.info(f"응답 메시지 수: {len(response['messages'])}")
+            agent_logger.debug(f"최종 응답 미리보기: {response['messages'][-1].content[:300]}...")
+            agent_logger.info("#" * 60)
 
             return Command(
                 update={
@@ -886,8 +1018,10 @@ class HierarchicalAgentTeams:
             model_name: 사용할 LLM 모델명 (기본값: config.model_name)
         """
         self.model_name = model_name or config.model_name
+        agent_logger.info(f"HierarchicalAgentTeams 초기화 (모델: {self.model_name})")
         self.llm = ChatOpenAI(model=self.model_name)
         self.graph = SuperGraphBuilder(self.llm).build()
+        agent_logger.info("Super Graph 빌드 완료")
 
     def run(self, user_request: str, stream: bool = True) -> Any:
         """
@@ -900,30 +1034,50 @@ class HierarchicalAgentTeams:
         Returns:
             처리 결과
         """
+        agent_logger.info("=" * 60)
+        agent_logger.info("[RUN] 사용자 요청 처리 시작")
+        agent_logger.info(f"스트리밍 모드: {stream}")
+        agent_logger.debug(f"사용자 요청: {user_request}")
+        agent_logger.info("=" * 60)
+
         input_data = {
             "messages": [("user", user_request)]
         }
 
         if stream:
-            return self._run_stream(input_data)
+            result = self._run_stream(input_data)
         else:
-            return self._run_invoke(input_data)
+            result = self._run_invoke(input_data)
+
+        agent_logger.info("=" * 60)
+        agent_logger.info("[RUN] 사용자 요청 처리 완료")
+        agent_logger.info("=" * 60)
+
+        return result
 
     def _run_stream(self, input_data: dict) -> None:
         """스트리밍 모드로 실행합니다."""
+        agent_logger.debug("[STREAM] 스트리밍 실행 시작")
+        step_count = 0
         for state in self.graph.stream(
             input_data,
             {"recursion_limit": config.recursion_limit}
         ):
+            step_count += 1
+            agent_logger.debug(f"[STREAM] Step {step_count}: {list(state.keys())}")
             print(state)
             print("---")
+        agent_logger.info(f"[STREAM] 총 {step_count} steps 완료")
 
     def _run_invoke(self, input_data: dict) -> dict:
         """일반 모드로 실행합니다."""
-        return self.graph.invoke(
+        agent_logger.debug("[INVOKE] 일반 모드 실행 시작")
+        result = self.graph.invoke(
             input_data,
             {"recursion_limit": config.recursion_limit}
         )
+        agent_logger.info(f"[INVOKE] 실행 완료 (메시지 수: {len(result.get('messages', []))})")
+        return result
 
 
 # =============================================================================
@@ -932,6 +1086,10 @@ class HierarchicalAgentTeams:
 
 def main():
     """메인 실행 함수"""
+    agent_logger.info("=" * 80)
+    agent_logger.info("Hierarchical Agent Teams - 시스템 초기화")
+    agent_logger.info("=" * 80)
+
     app = HierarchicalAgentTeams()
 
     # 예시 요청 실행
@@ -940,13 +1098,16 @@ def main():
         "기사 내용을 바탕으로 1500자 내외로 블로그를 작성하세요."
     )
 
-    print("=" * 80)
-    print("Hierarchical Agent Teams - Starting")
-    print("=" * 80)
-    print(f"User Request: {user_request}")
-    print("=" * 80)
+    agent_logger.info("=" * 80)
+    agent_logger.info("Hierarchical Agent Teams - 실행 시작")
+    agent_logger.info(f"User Request: {user_request}")
+    agent_logger.info("=" * 80)
 
     app.run(user_request, stream=True)
+
+    agent_logger.info("=" * 80)
+    agent_logger.info("Hierarchical Agent Teams - 실행 완료")
+    agent_logger.info("=" * 80)
 
 
 if __name__ == "__main__":

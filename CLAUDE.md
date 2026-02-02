@@ -61,3 +61,25 @@ Key settings in `Config` class:
 - `max_retry_count`: 1 (search retries)
 - `max_scrape_urls`: 3
 - `recursion_limit`: 150
+
+## Logging
+
+로그 파일은 `logs/` 디렉토리에 `YYYY-MM-DD.agent.log` 형식으로 저장됩니다.
+
+### 로그 레벨
+- `DEBUG`: 상세 디버그 정보 (메시지 내용, 검색 결과 미리보기 등)
+- `INFO`: 주요 이벤트 (노드 시작/완료, 라우팅 결정 등)
+- `WARNING`: 재검색 시도, URL 없음 등 주의 사항
+- `ERROR`: 스크래핑 실패, 파일 없음 등 오류
+
+### 로그 포맷
+```
+YYYY-MM-DD HH:MM:SS | LEVEL    | agent | message
+```
+
+### 로그 대상
+- Super Graph: `[RESEARCH_TEAM]`, `[WRITING_TEAM]`
+- Research Graph: `[RESEARCH_SUPERVISOR]`, `[SEARCH_NODE]`, `[WEB_SCRAPER_NODE]`
+- Writing Graph: `[WRITING/DOC_WRITER]`, `[WRITING/NOTE_TAKER]`, `[WRITING/CHART_GENERATOR]`
+- 도구: `[TOOL:scrape_webpages]`, `[TOOL:write_document]` 등
+- ReRank: `[ReRank]`
