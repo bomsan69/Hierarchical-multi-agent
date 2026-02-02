@@ -130,6 +130,8 @@ config = Config()
 class State(MessagesState):
     """기본 그래프 상태"""
     next: str
+    research_completed: bool  # research_team 완료 여부
+    writing_completed: bool   # writing_team 완료 여부
 
 
 class ResearchState(MessagesState):
@@ -944,7 +946,8 @@ class SuperGraphBuilder:
                             content=response["messages"][-1].content,
                             name="research_team"
                         )
-                    ]
+                    ],
+                    "research_completed": True,  # 연구 완료 플래그 설정
                 },
                 goto="supervisor",
             )
@@ -976,29 +979,62 @@ class SuperGraphBuilder:
                             content=response["messages"][-1].content,
                             name="writing_team"
                         )
-                    ]
+                    ],
+                    "writing_completed": True,  # 작성 완료 플래그 설정
                 },
                 goto="supervisor",
             )
 
         return call_paper_writing_team
 
+    def _create_super_supervisor_node(self) -> Callable[[State], Command]:
+        """
+        Super Graph용 규칙 기반 Supervisor 노드를 생성합니다.
+
+        라우팅 로직:
+        1. research_completed=False → research_team
+        2. research_completed=True, writing_completed=False → writing_team
+        3. writing_completed=True → END
+        """
+
+        def super_supervisor_node(
+            state: State
+        ) -> Command[Literal["research_team", "writing_team", "__end__"]]:
+            research_completed = state.get("research_completed", False)
+            writing_completed = state.get("writing_completed", False)
+
+            agent_logger.info("=" * 50)
+            agent_logger.info("[SUPER_SUPERVISOR] 라우팅 결정 중...")
+            agent_logger.info(f"research_completed: {research_completed}")
+            agent_logger.info(f"writing_completed: {writing_completed}")
+
+            if not research_completed:
+                goto = "research_team"
+                agent_logger.info("→ 연구 미완료. research_team 호출")
+            elif not writing_completed:
+                goto = "writing_team"
+                agent_logger.info("→ 연구 완료, 작성 미완료. writing_team 호출")
+            else:
+                goto = END
+                agent_logger.info("→ 모든 작업 완료. END로 이동")
+
+            agent_logger.info(f"[SUPER_SUPERVISOR 결정] goto = {goto}")
+            agent_logger.info("=" * 50)
+
+            return Command(
+                goto=goto,
+                update={"next": goto if goto != END else "FINISH"}
+            )
+
+        return super_supervisor_node
+
     def build(self) -> StateGraph:
         """Super Graph를 빌드하고 컴파일합니다."""
-        # Supervisor 생성
-        supervisor_node = create_supervisor_node(
-            self.llm,
-            ["research_team", "writing_team"],
-            {
-                "research_team": "Searches the web and scrapes webpages to gather information. Use this when you need to research a topic or collect data.",
-                "writing_team": "Creates outlines, writes documents, and generates charts. Use this when you need to produce written content or visualizations."
-            }
-        )
-
         # 그래프 빌드
         builder = StateGraph(State)
 
-        builder.add_node("supervisor", supervisor_node)
+        # 규칙 기반 Supervisor 사용
+        builder.add_node("supervisor", self._create_super_supervisor_node())
         builder.add_node("research_team", self._create_research_team_node())
         builder.add_node("writing_team", self._create_writing_team_node())
 
@@ -1049,7 +1085,9 @@ class HierarchicalAgentTeams:
         agent_logger.info("=" * 60)
 
         input_data = {
-            "messages": [("user", user_request)]
+            "messages": [("user", user_request)],
+            "research_completed": False,
+            "writing_completed": False,
         }
 
         if stream:
