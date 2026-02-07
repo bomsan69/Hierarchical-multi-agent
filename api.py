@@ -12,10 +12,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Security, Depends
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 from main import HierarchicalAgentTeams, agent_logger
+
+# API 키 설정
+API_KEY = "5jang12345678##*"
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 # FastAPI 앱 초기화
 app = FastAPI(
@@ -23,6 +28,32 @@ app = FastAPI(
     description="REST API for generating reports using hierarchical agent teams",
     version="1.0.0"
 )
+
+
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+
+async def verify_api_key(api_key: str = Security(api_key_header)) -> str:
+    """
+    API 키를 검증합니다.
+    
+    Args:
+        api_key: Header에서 받은 API 키
+        
+    Returns:
+        검증된 API 키
+        
+    Raises:
+        HTTPException: API 키가 유효하지 않을 때
+    """
+    if api_key != API_KEY:
+        agent_logger.warning(f"[API] 유효하지 않은 API 키 시도: {api_key[:10]}...")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API Key"
+        )
+    return api_key
 
 
 # =============================================================================
@@ -52,7 +83,10 @@ class MakeReportResponse(BaseModel):
 # =============================================================================
 
 @app.post("/make_report", response_model=MakeReportResponse)
-async def make_report(request: MakeReportRequest) -> MakeReportResponse:
+async def make_report(
+    request: MakeReportRequest,
+    api_key: str = Depends(verify_api_key)
+) -> MakeReportResponse:
     """
     리포트를 생성합니다.
 
